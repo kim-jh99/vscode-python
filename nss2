@@ -1,0 +1,74 @@
+import cv2
+import numpy as np
+from common.image import img2gray, resize, find_bounding_rects
+from deep_convnet import DeepConvNet
+from AppKit import NSSpeechSynthesizer
+
+# MNIST 신경망 모델 로드
+network = DeepConvNet()
+network.load_params("params.pkl")
+
+# 웹캠 초기화
+cap = cv2.VideoCapture(0)
+
+# 웹캠 프레임 크기 설정
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+# NSSpeechSynthesizer 객체 생성
+speech = NSSpeechSynthesizer.alloc().initWithVoice_("com.apple.speech.synthesis.voice.yuna")
+
+is_running = True
+digit_recognized = False  # 숫자 인식을 나타내는 플래그 변수
+
+while is_running:
+    # 웹캠 프레임 읽기
+    ret, frame = cap.read()
+
+    # 프레임 전처리
+    gray_img = img2gray(frame)
+    rects = find_bounding_rects(gray_img, min_size=(130, 130))
+
+    recognized_rects = []  # 인식된 경계 상자를 저장할 리스트
+
+    # 경계 상자 및 숫자 인식
+    for rect in rects:
+        x, y, w, h = rect
+        rect_img = gray_img[y:y+h, x:x+w]
+        resized_img = resize(rect_img, dsize=(28, 28)).reshape(1, 1, 28, 28)
+        prediction = np.argmax(network.predict(resized_img / 255.0))
+
+        if prediction in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]:
+            recognized_rects.append(rect)
+            if not digit_recognized:
+                digit_recognized = True
+                # 경계 상자 그리기
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                # 숫자 출력
+                cv2.putText(frame, str(prediction), (x, y-10),
+                            cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255), 2)
+                # 숫자 음성 출력
+                speech.startSpeakingString_(str(prediction))
+            else:
+                # 다른 경계 상자는 무시하고 표시하지 않음
+                continue
+
+    # 인식된 숫자가 없는 경우 플래그를 재설정
+    if len(recognized_rects) == 0:
+        digit_recognized = False
+
+    # 화면에 출력
+    cv2.imshow('MNIST Webcam', frame)
+
+    if digit_recognized:
+        cv2.waitKey(100)  # 인식된 경우 일시 정지
+    else:
+        cv2.waitKey(500)
+
+    # 종료 조건 체크
+    if cv2.getWindowProperty('MNIST Webcam', cv2.WND_PROP_VISIBLE) < 1:
+        is_running = False
+
+# 종료
+cap.release()
+cv2.destroyAllWindows()
